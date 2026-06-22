@@ -6,34 +6,44 @@ import ListingChecklist from '../components/ListingChecklist.jsx'
 import ExportModal from '../components/ExportModal.jsx'
 import { PLATFORMS, getPlatform } from '../lib/platforms.js'
 
+const CONFIDENCE_META = {
+  high: { label: 'High Confidence', color: 'bg-green-100 text-green-700', dot: 'bg-green-500', border: 'border-green-200' },
+  medium: { label: 'Medium Confidence', color: 'bg-amber-100 text-amber-700', dot: 'bg-amber-400', border: 'border-amber-200' },
+  low: { label: 'Low Confidence', color: 'bg-red-100 text-red-600', dot: 'bg-red-400', border: 'border-red-200' },
+}
+
 export default function ResultsPage() {
   const navigate = useNavigate()
-  const { pendingListing, setListing, clear } = useListingStore()
-  const [editing, setEditing] = useState(false)
+  const { pendingListing, setListing } = useListingStore()
+
   const [title, setTitle] = useState(pendingListing?.title || '')
   const [description, setDescription] = useState(pendingListing?.description || '')
-  const [price, setPrice] = useState(pendingListing?.price || 0)
+  const [price, setPrice] = useState(String(pendingListing?.price || ''))
+  const [condition, setCondition] = useState(pendingListing?.condition || '')
+  const [selectedPlatform, setSelectedPlatform] = useState(null)
   const [showExport, setShowExport] = useState(false)
-  const [selectedPlatform, setSelectedPlatform] = useState(pendingListing?.platform || null)
-  const [savedItemId, setSavedItemId] = useState(pendingListing?.id || null)
   const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(!!pendingListing?.id)
+  const [savedId, setSavedId] = useState(null)
 
   if (!pendingListing) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center px-5 text-center gap-4">
-        <p className="text-gray-500">No listing yet.</p>
-        <button onClick={() => navigate('/')} className="btn-primary">Upload an item</button>
+        <div className="w-16 h-16 bg-orange-100 rounded-3xl flex items-center justify-center">
+          <svg className="w-7 h-7 text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.174C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.174 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+          </svg>
+        </div>
+        <div>
+          <p className="font-bold text-gray-900">No listing to show</p>
+          <p className="text-sm text-gray-500 mt-1">Upload an item to generate a listing.</p>
+        </div>
+        <button onClick={() => navigate('/')} className="btn-primary !py-3 !px-6">Upload an item</button>
       </div>
     )
   }
 
-  const listing = { ...pendingListing, title, description, price }
-
-  function handleSaveEdits() {
-    setListing({ ...pendingListing, title, description, price })
-    setEditing(false)
-  }
+  const conf = CONFIDENCE_META[pendingListing.confidence] || CONFIDENCE_META.low
+  const priceNum = parseFloat(price) || 0
 
   async function handleSaveItem() {
     setSaving(true)
@@ -42,18 +52,23 @@ export default function ResultsPage() {
         image_url: pendingListing.imageUrl,
         title,
         description,
-        price: Number(price),
+        price: priceNum,
         category: pendingListing.category || 'General',
-        condition: pendingListing.condition || 'Gently Used',
-        ai_confidence: pendingListing.aiConfidence || null,
+        condition,
+        ai_confidence: pendingListing.confidence || 'low',
+        confidence_level: pendingListing.confidence || 'low',
+        notes: pendingListing.notes || [],
+        price_range_low: pendingListing.priceRange?.low ?? null,
+        price_range_high: pendingListing.priceRange?.high ?? null,
+        requires_review: pendingListing.requiresReview ?? false,
         platform: selectedPlatform,
-        status: selectedPlatform ? 'listed' : 'not_listed',
+        status: 'not_listed',
+        export_text: null,
       }
       const created = await createItem(payload)
-      setSavedItemId(created.id)
-      setSaved(true)
-      setListing({ ...pendingListing, id: created.id, title, description, price, platform: selectedPlatform })
-      setTimeout(() => navigate('/dashboard'), 600)
+      setSavedId(created.id)
+      setListing({ ...pendingListing, id: created.id, title, description, price: priceNum, condition, platform: selectedPlatform })
+      setTimeout(() => navigate('/dashboard'), 500)
     } catch (err) {
       console.error(err)
       setSaving(false)
@@ -62,102 +77,126 @@ export default function ResultsPage() {
 
   function handlePlatformMarkListed(platform) {
     setSelectedPlatform(platform)
-    setListing({ ...pendingListing, title, description, price, platform, id: savedItemId, status: 'listed' })
-    if (savedItemId) {
-      updateItem(savedItemId, { platform, status: 'listed' })
-    }
+    if (savedId) updateItem(savedId, { platform, status: 'listed' }).catch(console.error)
   }
 
-  function handleEditPrice(delta) {
-    setPrice((p) => Math.max(0, Math.round((Number(p) + delta) * 100) / 100))
+  const exportPayload = {
+    title,
+    description,
+    price: priceNum,
+    condition,
+    category: pendingListing.category,
+    confidence: pendingListing.confidence,
+    notes: pendingListing.notes,
+    requiresReview: pendingListing.requiresReview,
+    priceRange: pendingListing.priceRange,
   }
-
-  const platform = selectedPlatform ? getPlatform(selectedPlatform) : null
 
   return (
-    <div className="px-5 py-6 flex flex-col gap-5 animate-fade-in">
-      {/* Hero image */}
+    <div className="px-5 py-6 flex flex-col gap-5 animate-fade-in pb-10">
+
+      {/* Image + confidence overlay */}
       <div className="relative rounded-3xl overflow-hidden aspect-[4/3] shadow-md">
         <img src={pendingListing.imageUrl} alt={title} className="w-full h-full object-cover" />
-        <div className="absolute top-3 left-3 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full">
-          <span className="text-xs font-bold text-brand-600 flex items-center gap-1">
-            <Sparkle /> AI Generated
+        <div className="absolute top-3 left-3">
+          <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full backdrop-blur-sm border ${conf.color} ${conf.border}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${conf.dot}`} />
+            {conf.label}
           </span>
         </div>
-        {pendingListing.aiConfidence && (
-          <div className="absolute top-3 right-3 bg-black/60 backdrop-blur px-3 py-1.5 rounded-full">
-            <span className="text-xs font-bold text-white">{pendingListing.aiConfidence} confidence</span>
+        {pendingListing.category && (
+          <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-full">
+            <span className="text-xs font-bold text-white">{pendingListing.category}</span>
           </div>
         )}
       </div>
 
-      {/* Title section */}
-      <div className="card animate-slide-up">
-        <div className="flex items-start justify-between gap-3 mb-2">
-          <div className="flex items-center gap-1.5">
-            <Badge color="brand">{pendingListing.category}</Badge>
-            <Badge color="green">{pendingListing.condition}</Badge>
+      {/* Review warning banner */}
+      {pendingListing.requiresReview && (
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 animate-slide-up">
+          <WarningIcon />
+          <div>
+            <p className="text-sm font-bold text-amber-800">Review before posting</p>
+            <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+              AI confidence is {pendingListing.confidence}. Edit the title, description, and price below to make sure everything is accurate before you list.
+            </p>
           </div>
-          <button
-            onClick={() => setEditing((e) => !e)}
-            className="text-xs font-semibold text-brand-600 active:scale-95 shrink-0"
-          >
-            {editing ? 'Cancel' : 'Edit'}
-          </button>
+        </div>
+      )}
+
+      {/* Editable listing fields — always shown, no toggle */}
+      <div className="card flex flex-col gap-4 animate-slide-up">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-gray-900">Listing Details</h3>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-brand-600 bg-brand-50 px-2 py-1 rounded-full">
+            Edit freely
+          </span>
         </div>
 
-        {editing ? (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Title</label>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="input !py-2 !px-3 text-base font-bold mb-3"
+            placeholder="Enter a title for this item…"
+            className="input font-semibold"
           />
-        ) : (
-          <h2 className="text-xl font-bold text-gray-900 leading-tight">{title}</h2>
-        )}
+          <p className="text-[11px] text-gray-400">Include brand + model + colorway if you know them.</p>
+        </div>
 
-        {editing ? (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Description</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            rows={4}
-            className="input !py-2 !px-3 text-sm resize-none mt-2"
+            rows={5}
+            placeholder="Describe the item honestly…"
+            className="input resize-none leading-relaxed"
           />
-        ) : (
-          <p className="text-sm text-gray-600 leading-relaxed mt-2">{description}</p>
-        )}
+          <p className="text-[11px] text-gray-400">Be honest about condition — buyers notice inaccuracies.</p>
+        </div>
 
-        {editing && (
-          <button onClick={handleSaveEdits} className="btn-primary mt-3 !py-2.5 text-sm">
-            Save Changes
-          </button>
-        )}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Condition</label>
+          <select value={condition} onChange={(e) => setCondition(e.target.value)} className="input">
+            {pendingListing.conditionOptions ? pendingListing.conditionOptions.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            )) : [
+              'New / Deadstock', 'New / Unworn', 'Like New',
+              'Used – Excellent', 'Used – Good', 'Used – Fair',
+            ].map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
       </div>
 
-      {/* Price card */}
+      {/* Price */}
       <div className="card animate-slide-up bg-gradient-to-br from-brand-50 to-orange-50 !border-brand-200">
-        <div className="flex items-center justify-between mb-3">
-          <div>
-            <p className="text-xs font-bold text-brand-600 uppercase tracking-wider">Suggested Price</p>
-            <p className="text-3xl font-bold text-gray-900 mt-0.5">
-              ${Number(price).toFixed(2)}
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1">
+            <p className="text-xs font-bold text-brand-600 uppercase tracking-wider mb-1.5">Your Price</p>
+            <div className="relative">
+              <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                className="input !pl-7 text-2xl font-bold !bg-white/80"
+              />
+            </div>
+          </div>
+          <div className="text-right shrink-0 pt-1">
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">AI Suggested</p>
+            <p className="text-sm font-bold text-gray-700 mt-0.5">
+              ${pendingListing.priceRange?.low}–${pendingListing.priceRange?.high}
             </p>
           </div>
-          {editing && (
-            <div className="flex flex-col gap-1.5">
-              <button onClick={() => handleEditPrice(5)} className="w-9 h-9 bg-white rounded-xl flex items-center justify-center shadow-sm border border-orange-200 active:scale-90">
-                <Chevron up />
-              </button>
-              <button onClick={() => handleEditPrice(-5)} className="w-9 h-9 bg-white rounded-xl flex items-center justify-center shadow-sm border border-orange-200 active:scale-90">
-                <Chevron />
-              </button>
-            </div>
-          )}
         </div>
-        <div className="flex items-center gap-2 text-xs text-gray-500">
+        <div className="mt-3 pt-3 border-t border-brand-100 flex items-start gap-2 text-xs text-gray-500">
           <InfoIcon />
           <span>
-            Based on {pendingListing.similarItems?.length || 3} similar items (${pendingListing.priceRange?.low}–${pendingListing.priceRange?.high} range)
+            Based on similar sold items. Actual value depends on brand, size, and current demand — verify on eBay sold listings.
           </span>
         </div>
       </div>
@@ -165,7 +204,10 @@ export default function ResultsPage() {
       {/* Similar items */}
       {pendingListing.similarItems?.length > 0 && (
         <div className="card animate-slide-up">
-          <h3 className="font-bold text-gray-900 text-sm mb-3">Similar Sold Items</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-gray-900 text-sm">Simulated Comps</h3>
+            <span className="text-[10px] text-gray-400 font-medium">Example data only</span>
+          </div>
           <div className="flex flex-col gap-2">
             {pendingListing.similarItems.map((item, i) => (
               <div key={i} className="flex items-center justify-between bg-orange-50 rounded-2xl px-4 py-2.5">
@@ -175,35 +217,57 @@ export default function ResultsPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-gray-900">${item.price}</span>
-                  <span className="text-xs text-gray-400">sold {item.soldDays}d ago</span>
+                  <span className="text-xs text-gray-400">{item.soldDays}d ago</span>
                 </div>
               </div>
             ))}
           </div>
+          <p className="text-[11px] text-gray-400 mt-2.5">
+            Always check actual sold listings before pricing. Search eBay Sold for the most accurate comps.
+          </p>
+        </div>
+      )}
+
+      {/* AI Notes — things to verify */}
+      {pendingListing.notes?.length > 0 && (
+        <div className="card animate-slide-up !border-amber-200 bg-amber-50">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-6 h-6 rounded-full bg-amber-400 flex items-center justify-center shrink-0">
+              <svg className="w-3.5 h-3.5 text-white" viewBox="0 0 24 24" fill="currentColor">
+                <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <h3 className="font-bold text-amber-900 text-sm">Things to verify before posting</h3>
+          </div>
+          <ul className="flex flex-col gap-2">
+            {pendingListing.notes.map((note, i) => (
+              <li key={i} className="flex items-start gap-2.5 text-sm text-amber-800">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-1.5 shrink-0" />
+                {note}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
       {/* Checklist */}
-      <ListingChecklist item={{ ...listing, platform: selectedPlatform, status: selectedPlatform ? 'listed' : 'not_listed' }} />
+      <ListingChecklist item={{ title, description, price: priceNum, imageUrl: pendingListing.imageUrl, platform: selectedPlatform, status: 'not_listed' }} />
 
-      {/* Platform action */}
+      {/* Platform picker */}
       <div className="card animate-slide-up">
         <h3 className="font-bold text-gray-900 text-sm mb-3">Choose a Platform</h3>
-        <div className="flex flex-col gap-2 mb-4">
+        <div className="flex flex-col gap-2">
           {PLATFORMS.map((p) => (
             <button
               key={p.id}
-              onClick={() => {
-                setSelectedPlatform(p.id)
-                setShowExport(true)
-              }}
+              onClick={() => { setSelectedPlatform(p.id); setShowExport(true) }}
               className={`flex items-center gap-3 p-3 rounded-2xl border-2 text-left transition-all active:scale-[0.98] ${
                 selectedPlatform === p.id
                   ? `${p.bgColor} ${p.borderColor}`
                   : 'border-orange-100 hover:border-orange-200'
               }`}
             >
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-xs" style={{ backgroundColor: p.color }}>
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-xs shrink-0" style={{ backgroundColor: p.color }}>
                 {p.icon}
               </div>
               <div className="flex-1">
@@ -211,65 +275,62 @@ export default function ResultsPage() {
                 <p className="text-xs text-gray-500">{p.hint}</p>
               </div>
               {selectedPlatform === p.id && (
-                <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-full">Chosen</span>
+                <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded-full shrink-0">Chosen</span>
               )}
             </button>
           ))}
         </div>
-        {platform && (
-          <button onClick={() => setShowExport(true)} className="btn-primary w-full flex items-center justify-center gap-2">
-            <CopyIcon /> Copy Listing to {platform.name}
+        {selectedPlatform && (
+          <button onClick={() => setShowExport(true)} className="btn-primary w-full mt-3 flex items-center justify-center gap-2">
+            <CopyIcon /> Copy Listing to {getPlatform(selectedPlatform)?.name}
           </button>
         )}
       </div>
 
-      <button onClick={handleSaveItem} disabled={saving} className="btn-primary w-full !bg-green-500 hover:!bg-green-600 shadow-green-500/30 flex items-center justify-center gap-2">
-        {saving ? (
-          <>
-            <Spinner /> Saving…
-          </>
-        ) : saved ? (
-          <>
-            <CheckIcon /> Saved to Dashboard
-          </>
-        ) : (
-          <>Save to My Items</>
-        )}
+      {/* Save CTA */}
+      <button
+        onClick={handleSaveItem}
+        disabled={saving || !title.trim() || priceNum <= 0}
+        className="btn-primary w-full !bg-green-500 hover:!bg-green-600 shadow-green-500/30 flex items-center justify-center gap-2"
+      >
+        {saving ? <><Spinner /> Saving…</> : <><CheckIcon /> Save to My Items</>}
       </button>
+      {(!title.trim() || priceNum <= 0) && (
+        <p className="text-center text-xs text-gray-400 -mt-3">Add a title and price before saving.</p>
+      )}
+
+      {showExport && (
+        <ExportModal
+          item={exportPayload}
+          selectedPlatform={selectedPlatform}
+          onClose={() => setShowExport(false)}
+          onPlatformChange={setSelectedPlatform}
+          onListed={handlePlatformMarkListed}
+        />
+      )}
     </div>
   )
 }
 
-function Badge({ children, color }) {
-  const map = {
-    brand: 'bg-brand-100 text-brand-700',
-    green: 'bg-green-100 text-green-700',
-  }
-  return <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${map[color]}`}>{children}</span>
-}
-
-function Chevron({ up }) {
+function WarningIcon() {
   return (
-    <svg className={`w-4 h-4 text-gray-600 ${up ? '' : 'rotate-180'}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
+    <svg className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="currentColor">
+      <path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" />
     </svg>
   )
 }
 
 function InfoIcon() {
   return (
-    <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+    <svg className="w-3.5 h-3.5 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
     </svg>
   )
 }
 
-function Sparkle() {
-  return (
-    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-      <path d="M12 2l1.5 6.5L20 10l-6.5 1.5L12 18l-1.5-6.5L4 10l6.5-1.5L12 2z" />
-    </svg>
-  )
+function PlatformDot({ platform }) {
+  const colors = { ebay: '#e53238', depop: '#ff2300', poshmark: '#820f7e' }
+  return <div className="w-2 h-2 rounded-full" style={{ backgroundColor: colors[platform] || '#999' }} />
 }
 
 function CopyIcon() {
@@ -294,14 +355,5 @@ function Spinner() {
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>
-  )
-}
-
-function PlatformDot({ platform }) {
-  return (
-    <div
-      className="w-2 h-2 rounded-full"
-      style={{ backgroundColor: platform === 'ebay' ? '#e53238' : platform === 'depop' ? '#ff2300' : '#820f7e' }}
-    />
   )
 }

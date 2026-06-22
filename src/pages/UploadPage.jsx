@@ -43,8 +43,10 @@ export default function UploadPage() {
     try {
       const { publicUrl, path } = await uploadImage(file)
       setStatus('analyzing')
-      await new Promise((r) => setTimeout(r, 600))
-      const ai = generateListing(path)
+      await new Promise((r) => setTimeout(r, 700))
+      // Use the original filename for keyword extraction — the storage path
+      // is a UUID and contains no useful keywords.
+      const ai = generateListing(file.name)
 
       setListing({
         imageUrl: publicUrl,

@@ -172,11 +172,14 @@ export default function DashboardPage() {
             price: exportItem.price,
             condition: exportItem.condition,
             category: exportItem.category,
-            aiConfidence: exportItem.ai_confidence || '—',
+            confidence: exportItem.confidence_level || exportItem.ai_confidence || 'low',
+            notes: exportItem.notes || [],
+            priceRange: exportItem.price_range_low != null ? { low: exportItem.price_range_low, high: exportItem.price_range_high } : null,
+            requiresReview: exportItem.requires_review ?? false,
           }}
           selectedPlatform={exportItem.platform}
           onClose={() => setExportItem(null)}
-          onPlatformChange={() => {}}
+          onPlatformChange={(platform) => setExportItem((prev) => ({ ...prev, platform }))}
           onListed={(platform) => handlePlatformListed(exportItem, platform)}
         />
       )}
@@ -184,13 +187,26 @@ export default function DashboardPage() {
   )
 }
 
+const CONF_BADGE = {
+  high: 'bg-green-100 text-green-700',
+  medium: 'bg-amber-100 text-amber-700',
+  low: 'bg-red-100 text-red-600',
+}
+
 function ItemCard({ item, onStatusChange, onDelete, onExport }) {
   const [expanded, setExpanded] = useState(false)
   const status = STATUS_META[item.status] || STATUS_META.not_listed
   const platform = item.platform ? getPlatform(item.platform) : null
+  const conf = item.confidence_level || item.ai_confidence
 
   return (
     <div className="card !p-3 animate-slide-up">
+      {item.requires_review && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-2">
+          <svg className="w-3.5 h-3.5 text-amber-500 shrink-0" viewBox="0 0 24 24" fill="currentColor"><path fillRule="evenodd" d="M9.401 3.003c1.155-2 4.043-2 5.197 0l7.355 12.748c1.154 2-.29 4.5-2.599 4.5H4.645c-2.309 0-3.752-2.5-2.598-4.5L9.4 3.003zM12 8.25a.75.75 0 01.75.75v3.75a.75.75 0 01-1.5 0V9a.75.75 0 01.75-.75zm0 8.25a.75.75 0 100-1.5.75.75 0 000 1.5z" clipRule="evenodd" /></svg>
+          <p className="text-[11px] font-semibold text-amber-800">Review before posting — AI confidence is {conf || 'low'}</p>
+        </div>
+      )}
       <div className="flex gap-3">
         <img src={item.image_url} alt={item.title} className="w-20 h-20 rounded-2xl object-cover shrink-0" />
         <div className="flex-1 min-w-0">
@@ -213,6 +229,11 @@ function ItemCard({ item, onStatusChange, onDelete, onExport }) {
                 {platform.name}
               </span>
             )}
+            {conf && (
+              <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${CONF_BADGE[conf] || 'bg-gray-100 text-gray-500'}`}>
+                {conf} AI
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -224,10 +245,26 @@ function ItemCard({ item, onStatusChange, onDelete, onExport }) {
       {expanded && (
         <div className="mt-2 pt-2 border-t border-orange-50 flex flex-col gap-2 animate-fade-in">
           <p className="text-xs text-gray-600 leading-relaxed">{item.description}</p>
-          <div className="flex gap-2 text-[10px] text-gray-400">
-            <span>{item.condition}</span>•<span>{item.category}</span>
-            {item.ai_confidence && <><span>•</span><span>{item.ai_confidence} AI</span></>}
+          <div className="flex gap-2 flex-wrap text-[10px] text-gray-400">
+            <span>{item.condition}</span>
+            {item.category && <><span>•</span><span>{item.category}</span></>}
+            {item.price_range_low != null && (
+              <><span>•</span><span>Range: ${item.price_range_low}–${item.price_range_high}</span></>
+            )}
           </div>
+          {item.notes?.length > 0 && (
+            <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2">
+              <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider mb-1.5">To verify</p>
+              <ul className="flex flex-col gap-1">
+                {item.notes.map((note, i) => (
+                  <li key={i} className="text-[11px] text-amber-800 flex items-start gap-1.5">
+                    <span className="mt-1 w-1 h-1 rounded-full bg-amber-400 shrink-0" />
+                    {note}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
