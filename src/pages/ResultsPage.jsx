@@ -7,10 +7,12 @@ import ExportModal from '../components/ExportModal.jsx'
 import { PLATFORMS, getPlatform } from '../lib/platforms.js'
 
 const CONFIDENCE_META = {
-  high: { label: 'High Confidence', color: 'bg-green-100 text-green-700', dot: 'bg-green-500', border: 'border-green-200' },
-  medium: { label: 'Medium Confidence', color: 'bg-amber-100 text-amber-700', dot: 'bg-amber-400', border: 'border-amber-200' },
-  low: { label: 'Low Confidence', color: 'bg-red-100 text-red-600', dot: 'bg-red-400', border: 'border-red-200' },
+  high: { label: 'High confidence', color: 'bg-green-100 text-green-700', dot: 'bg-green-500', border: 'border-green-200' },
+  medium: { label: 'Medium confidence', color: 'bg-amber-100 text-amber-700', dot: 'bg-amber-400', border: 'border-amber-200' },
+  low: { label: 'Low confidence', color: 'bg-red-100 text-red-600', dot: 'bg-red-400', border: 'border-red-200' },
 }
+
+const GENERIC_CATEGORIES = new Set(['general', 'item', 'miscellaneous', 'general item'])
 
 export default function ResultsPage() {
   const navigate = useNavigate()
@@ -98,18 +100,46 @@ export default function ResultsPage() {
       {/* Image + confidence overlay */}
       <div className="relative rounded-3xl overflow-hidden aspect-[4/3] shadow-md">
         <img src={pendingListing.imageUrl} alt={title} className="w-full h-full object-cover" />
+        {/* Bottom gradient for readability */}
+        <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent" />
         <div className="absolute top-3 left-3">
           <span className={`inline-flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full backdrop-blur-sm border ${conf.color} ${conf.border}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${conf.dot}`} />
             {conf.label}
           </span>
         </div>
-        {pendingListing.category && (
+        {/* Category pill — only shown when AI identified something specific */}
+        {pendingListing.category && !GENERIC_CATEGORIES.has(pendingListing.category.toLowerCase()) && (
           <div className="absolute top-3 right-3 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-full">
             <span className="text-xs font-bold text-white">{pendingListing.category}</span>
           </div>
         )}
+        {/* Source badge at bottom */}
+        <div className="absolute bottom-3 left-3">
+          {pendingListing.source === 'vision' ? (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-blue-600/80 text-white backdrop-blur-sm">
+              <EyeIcon /> Vision AI
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-black/50 text-white/80 backdrop-blur-sm">
+              Keyword analysis
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* Source explainer — only shown for fallback */}
+      {pendingListing.source === 'fallback' && (
+        <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-2xl px-4 py-3 animate-slide-up">
+          <InfoCircleIcon />
+          <div>
+            <p className="text-sm font-bold text-blue-800">Generated from filename</p>
+            <p className="text-xs text-blue-700 mt-0.5 leading-relaxed">
+              AI vision is not configured. This listing was generated from the filename — review and edit every field to make sure it matches your item.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Review warning banner */}
       {pendingListing.requiresReview && (
@@ -118,7 +148,7 @@ export default function ResultsPage() {
           <div>
             <p className="text-sm font-bold text-amber-800">Review before posting</p>
             <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
-              AI confidence is {pendingListing.confidence}. Edit the title, description, and price below to make sure everything is accurate before you list.
+              Confidence is <strong>{pendingListing.confidence}</strong>. Edit the title, description, and price below to make sure everything is accurate before you list.
             </p>
           </div>
         </div>
@@ -309,6 +339,23 @@ export default function ResultsPage() {
         />
       )}
     </div>
+  )
+}
+
+function EyeIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
+  )
+}
+
+function InfoCircleIcon() {
+  return (
+    <svg className="w-5 h-5 text-blue-500 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+    </svg>
   )
 }
 
