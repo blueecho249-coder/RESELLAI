@@ -7,7 +7,7 @@ import { generateListing } from '../lib/aiGenerator.js'
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-async function analyzeWithVision(imageUrl) {
+async function callAnalyzeImage(imageUrl) {
   const res = await fetch(`${SUPABASE_URL}/functions/v1/analyze-image`, {
     method: 'POST',
     headers: {
@@ -18,21 +18,28 @@ async function analyzeWithVision(imageUrl) {
     body: JSON.stringify({ imageUrl }),
   })
 
-  // 503 means no API key is configured — not a hard failure, use fallback
+  // 503 = no API keys configured on the server — trigger local fallback
   if (res.status === 503) return null
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
-    throw new Error(body.message || `Vision API error (${res.status})`)
+    throw new Error(body.message || `Analysis error (${res.status})`)
   }
 
   const data = await res.json()
-  // Sanity-check the shape before trusting it
   if (!data.title || !data.description || !data.confidence) {
-    throw new Error('Unexpected response shape from vision API')
+    throw new Error('Unexpected response from image analysis API')
   }
   return data
 }
+
+// Phases drive the animated stepper in the UI
+const PHASES = [
+  { id: 'uploading',  label: 'Uploading photo' },
+  { id: 'analyzing',  label: 'Analyzing image…' },
+  { id: 'detecting',  label: 'Detecting item type' },
+  { id: 'listing',    label: 'Generating listing' },
+]
 
 export default function UploadPage() {
   const navigate = useNavigate()
@@ -40,8 +47,8 @@ export default function UploadPage() {
   const inputRef = useRef(null)
   const [preview, setPreview] = useState(null)
   const [file, setFile] = useState(null)
-  const [status, setStatus] = useState('idle') // idle | uploading | analyzing | done
-  const [usingVision, setUsingVision] = useState(null) // true | false | null
+  const [phase, setPhase] = useState('idle')
+  const [detectedLabel, setDetectedLabel] = useState(null)
   const [error, setError] = useState(null)
 
   function handleFile(selected) {
@@ -52,6 +59,7 @@ export default function UploadPage() {
     }
     setError(null)
     setFile(selected)
+    setDetectedLabel(null)
     setPreview(URL.createObjectURL(selected))
   }
 
@@ -60,47 +68,62 @@ export default function UploadPage() {
 
   async function handleGenerate() {
     if (!file) { setError('Add a photo first.'); return }
-    setStatus('uploading')
     setError(null)
-    setUsingVision(null)
+    setDetectedLabel(null)
 
     try {
+      // Step 1 — upload
+      setPhase('uploading')
       const { publicUrl, path } = await uploadImage(file)
-      setStatus('analyzing')
 
+      // Step 2 — vision analysis
+      setPhase('analyzing')
       let ai = null
+
       try {
-        ai = await analyzeWithVision(publicUrl)
-        setUsingVision(ai !== null)
+        ai = await callAnalyzeImage(publicUrl)
+
+        if (ai) {
+          // Step 3 — show detected category briefly
+          setPhase('detecting')
+          setDetectedLabel(
+            ai.category && !['item', 'general'].includes(ai.category.toLowerCase())
+              ? ai.category
+              : ai.brand ?? null
+          )
+          // Small pause so the user can read the "detected" label
+          await new Promise((r) => setTimeout(r, 900))
+        }
       } catch (visionErr) {
-        // Vision call failed hard — fall back silently, don't surface to user
-        console.warn('Vision API failed, falling back to local generator:', visionErr.message)
-        setUsingVision(false)
+        console.warn('Vision API failed, using local fallback:', visionErr.message)
       }
 
-      // Fall back to the local keyword-based generator if vision is unavailable
+      // Step 4 — build listing (fall back to local if vision unavailable)
+      setPhase('listing')
       if (!ai) {
         ai = generateListing(file.name)
         ai.source = 'fallback'
       }
+      await new Promise((r) => setTimeout(r, 400))
 
       setListing({ imageUrl: publicUrl, imageFilename: path, ...ai })
-      setStatus('done')
+      setPhase('done')
       navigate('/results')
     } catch (err) {
       console.error(err)
-      setError('Something went wrong. Try again.')
-      setStatus('idle')
+      setError('Something went wrong. Check your connection and try again.')
+      setPhase('idle')
     }
   }
 
-  const busy = status === 'uploading' || status === 'analyzing'
+  const busy = !['idle', 'done'].includes(phase)
+  const currentPhaseIndex = PHASES.findIndex((p) => p.id === phase)
 
   return (
     <div className="px-5 py-6 flex flex-col gap-6 animate-fade-in">
       <section className="text-center">
         <h2 className="text-2xl font-bold text-gray-900">Got something to flip?</h2>
-        <p className="text-gray-500 text-sm mt-1">Snap a pic — AI will build your listing from the image.</p>
+        <p className="text-gray-500 text-sm mt-1">Snap a pic — AI reads the image directly.</p>
       </section>
 
       {/* Drop zone */}
@@ -116,13 +139,30 @@ export default function UploadPage() {
       >
         {preview ? (
           <>
-            <img src={preview} alt="Item preview" className={`w-full h-full object-cover transition-opacity ${busy ? 'opacity-60' : 'opacity-100'}`} />
+            <img
+              src={preview}
+              alt="Item preview"
+              className={`w-full h-full object-cover transition-opacity duration-300 ${busy ? 'opacity-50' : 'opacity-100'}`}
+            />
             {busy && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30 backdrop-blur-sm gap-3">
-                <Spinner large />
-                <p className="text-white font-semibold text-sm drop-shadow">
-                  {status === 'uploading' ? 'Uploading photo…' : 'Analyzing image with AI…'}
-                </p>
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] gap-3 px-6">
+                <div className="w-12 h-12 rounded-full bg-white/20 border-2 border-white/50 flex items-center justify-center">
+                  <Spinner />
+                </div>
+                <div className="text-center">
+                  <p className="text-white font-bold text-sm drop-shadow">
+                    {phase === 'uploading' && 'Uploading photo…'}
+                    {phase === 'analyzing' && 'Analyzing image…'}
+                    {phase === 'detecting' && detectedLabel ? `Detected: ${detectedLabel}` : phase === 'detecting' ? 'Detecting item type…' : null}
+                    {phase === 'listing' && 'Generating listing…'}
+                  </p>
+                  {phase === 'analyzing' && (
+                    <p className="text-white/70 text-xs mt-1">Reading brand, colorway, condition…</p>
+                  )}
+                  {phase === 'detecting' && detectedLabel && (
+                    <p className="text-white/70 text-xs mt-1">Building your listing…</p>
+                  )}
+                </div>
               </div>
             )}
           </>
@@ -146,7 +186,10 @@ export default function UploadPage() {
       </div>
 
       {preview && !busy && (
-        <button onClick={() => inputRef.current?.click()} className="self-center text-sm font-semibold text-brand-600 active:scale-95">
+        <button
+          onClick={() => inputRef.current?.click()}
+          className="self-center text-sm font-semibold text-brand-600 active:scale-95"
+        >
           Choose a different photo
         </button>
       )}
@@ -157,20 +200,59 @@ export default function UploadPage() {
         </div>
       )}
 
-      <button onClick={handleGenerate} disabled={!file || busy} className="btn-primary w-full flex items-center justify-center gap-2">
-        {busy ? <><Spinner />{status === 'uploading' ? 'Uploading…' : 'Analyzing image…'}</> : <><SparklesIcon />Generate Listing</>}
+      <button
+        onClick={handleGenerate}
+        disabled={!file || busy}
+        className="btn-primary w-full flex items-center justify-center gap-2"
+      >
+        {busy
+          ? <><Spinner />{phase === 'uploading' ? 'Uploading…' : phase === 'analyzing' ? 'Analyzing image…' : phase === 'detecting' ? 'Detecting item…' : 'Building listing…'}</>
+          : <><SparklesIcon />Generate Listing</>
+        }
       </button>
 
-      {/* Progress steps shown while working */}
+      {/* Animated step tracker */}
       {busy && (
-        <div className="card flex flex-col gap-3 animate-slide-up">
-          <ProgressStep n={1} label="Upload photo to storage" done={status === 'analyzing' || status === 'done'} active={status === 'uploading'} />
-          <ProgressStep n={2} label="Analyze image with AI vision" done={status === 'done'} active={status === 'analyzing'} />
-          <ProgressStep n={3} label="Build your listing" done={false} active={false} muted />
+        <div className="card flex flex-col gap-0 overflow-hidden animate-slide-up !p-0">
+          {PHASES.map((p, i) => {
+            const isDone = i < currentPhaseIndex
+            const isActive = p.id === phase
+            const isMuted = i > currentPhaseIndex
+            return (
+              <div
+                key={p.id}
+                className={`flex items-center gap-3 px-5 py-3.5 transition-colors ${
+                  isActive ? 'bg-brand-50' : isDone ? 'bg-white' : 'bg-white'
+                } ${i < PHASES.length - 1 ? 'border-b border-orange-50' : ''}`}
+              >
+                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all ${
+                  isDone ? 'bg-green-500 text-white' : isActive ? 'bg-brand-500 text-white' : 'bg-orange-100 text-gray-300'
+                }`}>
+                  {isDone ? '✓' : i + 1}
+                </div>
+                <div className="flex-1">
+                  <span className={`text-sm font-semibold transition-colors ${
+                    isActive ? 'text-brand-700' : isDone ? 'text-gray-500' : 'text-gray-300'
+                  }`}>
+                    {p.id === 'detecting' && isActive && detectedLabel
+                      ? `Detected: ${detectedLabel}`
+                      : p.label}
+                  </span>
+                  {isActive && p.id === 'analyzing' && (
+                    <p className="text-[11px] text-brand-500 mt-0.5">Reading brand, colorway, condition…</p>
+                  )}
+                  {isActive && p.id === 'detecting' && !detectedLabel && (
+                    <p className="text-[11px] text-brand-500 mt-0.5">Identifying item category…</p>
+                  )}
+                </div>
+                {isActive && <Spinner />}
+              </div>
+            )
+          })}
         </div>
       )}
 
-      {/* How it works card — only when idle */}
+      {/* How it works — only when idle and no file chosen */}
       {!file && !busy && (
         <div className="card animate-slide-up">
           <div className="flex items-center gap-2 mb-4">
@@ -182,25 +264,11 @@ export default function UploadPage() {
           <div className="flex flex-col gap-3">
             <Step n={1} text="Upload a photo of your item" />
             <Step n={2} text="AI reads the image: brand, colorway, condition" />
-            <Step n={3} text="Edit the title, description, and price" />
-            <Step n={4} text="Copy to eBay, Depop, or Poshmark" />
+            <Step n={3} text="Detected item type shown in real time" />
+            <Step n={4} text="Edit and copy your listing to eBay, Depop, or Poshmark" />
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function ProgressStep({ n, label, done, active, muted }) {
-  return (
-    <div className="flex items-center gap-3">
-      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-        done ? 'bg-green-500 text-white' : active ? 'bg-brand-500 text-white' : 'bg-orange-100 text-gray-400'
-      }`}>
-        {done ? '✓' : n}
-      </div>
-      <span className={`text-sm font-medium flex-1 ${muted && !active ? 'text-gray-400' : 'text-gray-700'}`}>{label}</span>
-      {active && <Spinner />}
     </div>
   )
 }
@@ -231,9 +299,9 @@ function SparklesIcon({ small } = {}) {
   )
 }
 
-function Spinner({ large } = {}) {
+function Spinner() {
   return (
-    <svg className={`animate-spin ${large ? 'w-8 h-8 text-white' : 'w-4 h-4'}`} viewBox="0 0 24 24" fill="none">
+    <svg className="animate-spin w-4 h-4 text-brand-500" viewBox="0 0 24 24" fill="none">
       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
     </svg>

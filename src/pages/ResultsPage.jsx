@@ -116,17 +116,47 @@ export default function ResultsPage() {
         )}
         {/* Source badge at bottom */}
         <div className="absolute bottom-3 left-3">
-          {pendingListing.source === 'vision' ? (
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-blue-600/80 text-white backdrop-blur-sm">
-              <EyeIcon /> Vision AI
+          {pendingListing.source === 'gemini' && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-blue-600/85 text-white backdrop-blur-sm">
+              <EyeIcon /> Gemini Vision
             </span>
-          ) : (
+          )}
+          {pendingListing.source === 'vision+gemini' && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-indigo-600/85 text-white backdrop-blur-sm">
+              <EyeIcon /> Vision + Gemini
+            </span>
+          )}
+          {pendingListing.source === 'vision' && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-purple-600/85 text-white backdrop-blur-sm">
+              <EyeIcon /> Cloud Vision
+            </span>
+          )}
+          {pendingListing.source === 'fallback' && (
             <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-black/50 text-white/80 backdrop-blur-sm">
               Keyword analysis
             </span>
           )}
         </div>
       </div>
+
+      {/* Detected features — what the AI actually saw */}
+      {pendingListing.detectedFeatures?.length > 0 && (
+        <div className="card !p-4 animate-slide-up">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+              <EyeIconSm />
+            </div>
+            <h3 className="font-bold text-gray-900 text-sm">What the AI saw</h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {pendingListing.detectedFeatures.map((f, i) => (
+              <span key={i} className="text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100 px-3 py-1.5 rounded-full">
+                {f}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Source explainer — only shown for fallback */}
       {pendingListing.source === 'fallback' && (
@@ -339,6 +369,15 @@ export default function ResultsPage() {
         />
       )}
     </div>
+  )
+}
+
+function EyeIconSm() {
+  return (
+    <svg className="w-3.5 h-3.5 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+    </svg>
   )
 }
 
