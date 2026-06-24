@@ -1,44 +1,71 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { uploadImage } from '../services/items.js'
 import { useListingStore } from '../store/listingStore.jsx'
 import { generateListing } from '../lib/aiGenerator.js'
+import { analyzeImageForListing, isVisionReady } from '../lib/visionService.js'
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-async function callAnalyzeImage(imageUrl) {
-  const res = await fetch(`${SUPABASE_URL}/functions/v1/analyze-image`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-      'Apikey': SUPABASE_ANON_KEY,
-    },
-    body: JSON.stringify({ imageUrl }),
-  })
-
-  // 503 = no API keys configured on the server — trigger local fallback
-  if (res.status === 503) return null
-
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.message || `Analysis error (${res.status})`)
+async function callAnalyzeImage(imageUrl, file) {
+  try {
+    // Try local vision analysis first (TensorFlow COCO-SSD)
+    const visionReady = await isVisionReady()
+    if (visionReady && file) {
+      console.log('Using local vision analysis...')
+      const visionResult = await analyzeImageForListing(file)
+      if (visionResult.success) {
+        return {
+          title: `${visionResult.detectedItem || 'Item'}`,
+          category: visionResult.category,
+          brand: visionResult.brandHints?.[0] || null,
+          condition: visionResult.condition,
+          confidence: visionResult.confidence,
+          detectionScore: visionResult.detectionScore,
+          description: `Detected: ${visionResult.detectedItem}. ${visionResult.notes.join(' ')}`,
+          source: 'local-vision',
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Local vision analysis failed:', err.message)
   }
 
-  const data = await res.json()
-  if (!data.title || !data.description || !data.confidence) {
-    throw new Error('Unexpected response from image analysis API')
+  // Fallback to Supabase function
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/analyze-image`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Apikey': SUPABASE_ANON_KEY,
+      },
+      body: JSON.stringify({ imageUrl }),
+    })
+
+    if (res.status === 503) return null
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}))
+      throw new Error(body.message || `Analysis error (${res.status})`)
+    }
+
+    const data = await res.json()
+    if (!data.title || !data.description || !data.confidence) {
+      throw new Error('Unexpected response from image analysis API')
+    }
+    return { ...data, source: 'supabase' }
+  } catch (err) {
+    console.warn('Supabase vision API failed:', err.message)
+    return null
   }
-  return data
 }
 
-// Phases drive the animated stepper in the UI
 const PHASES = [
-  { id: 'uploading',  label: 'Uploading photo' },
-  { id: 'analyzing',  label: 'Analyzing image…' },
-  { id: 'detecting',  label: 'Detecting item type' },
-  { id: 'listing',    label: 'Generating listing' },
+  { id: 'uploading', label: 'Uploading photo' },
+  { id: 'analyzing', label: 'Analyzing image…' },
+  { id: 'detecting', label: 'Detecting item type' },
+  { id: 'listing', label: 'Generating listing' },
 ]
 
 export default function UploadPage() {
@@ -50,6 +77,12 @@ export default function UploadPage() {
   const [phase, setPhase] = useState('idle')
   const [detectedLabel, setDetectedLabel] = useState(null)
   const [error, setError] = useState(null)
+  const [visionAvailable, setVisionAvailable] = useState(false)
+
+  useEffect(() => {
+    // Check if vision is ready on mount
+    isVisionReady().then(setVisionAvailable).catch(() => setVisionAvailable(false))
+  }, [])
 
   function handleFile(selected) {
     if (!selected) return
@@ -63,11 +96,19 @@ export default function UploadPage() {
     setPreview(URL.createObjectURL(selected))
   }
 
-  function onInputChange(e) { handleFile(e.target.files?.[0]) }
-  function onDrop(e) { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]) }
+  function onInputChange(e) {
+    handleFile(e.target.files?.[0])
+  }
+  function onDrop(e) {
+    e.preventDefault()
+    handleFile(e.dataTransfer.files?.[0])
+  }
 
   async function handleGenerate() {
-    if (!file) { setError('Add a photo first.'); return }
+    if (!file) {
+      setError('Add a photo first.')
+      return
+    }
     setError(null)
     setDetectedLabel(null)
 
@@ -81,7 +122,7 @@ export default function UploadPage() {
       let ai = null
 
       try {
-        ai = await callAnalyzeImage(publicUrl)
+        ai = await callAnalyzeImage(publicUrl, file)
 
         if (ai) {
           // Step 3 — show detected category briefly
@@ -89,7 +130,7 @@ export default function UploadPage() {
           setDetectedLabel(
             ai.category && !['item', 'general'].includes(ai.category.toLowerCase())
               ? ai.category
-              : ai.brand ?? null
+              : ai.brand ?? ai.detectedItem ?? null
           )
           // Small pause so the user can read the "detected" label
           await new Promise((r) => setTimeout(r, 900))
@@ -124,6 +165,9 @@ export default function UploadPage() {
       <section className="text-center">
         <h2 className="text-2xl font-bold text-gray-900">Got something to flip?</h2>
         <p className="text-gray-500 text-sm mt-1">Snap a pic — AI reads the image directly.</p>
+        {visionAvailable && (
+          <p className="text-green-600 text-xs mt-2 font-semibold">✓ Vision AI enabled</p>
+        )}
       </section>
 
       {/* Drop zone */}
@@ -133,16 +177,16 @@ export default function UploadPage() {
         onDragOver={(e) => e.preventDefault()}
         className={`relative rounded-3xl border-2 border-dashed transition-all overflow-hidden aspect-[4/3] flex items-center justify-center ${
           busy ? 'cursor-default' : 'cursor-pointer'
-        } ${
-          preview ? 'border-brand-400 bg-white' : 'border-orange-300 bg-orange-50 hover:border-brand-400'
-        }`}
+        } ${preview ? 'border-brand-400 bg-white' : 'border-orange-300 bg-orange-50 hover:border-brand-400'}`}
       >
         {preview ? (
           <>
             <img
               src={preview}
               alt="Item preview"
-              className={`w-full h-full object-cover transition-opacity duration-300 ${busy ? 'opacity-50' : 'opacity-100'}`}
+              className={`w-full h-full object-cover transition-opacity duration-300 ${
+                busy ? 'opacity-50' : 'opacity-100'
+              }`}
             />
             {busy && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-[2px] gap-3 px-6">
@@ -153,11 +197,15 @@ export default function UploadPage() {
                   <p className="text-white font-bold text-sm drop-shadow">
                     {phase === 'uploading' && 'Uploading photo…'}
                     {phase === 'analyzing' && 'Analyzing image…'}
-                    {phase === 'detecting' && detectedLabel ? `Detected: ${detectedLabel}` : phase === 'detecting' ? 'Detecting item type…' : null}
+                    {phase === 'detecting' && detectedLabel
+                      ? `Detected: ${detectedLabel}`
+                      : phase === 'detecting'
+                      ? 'Detecting item type…'
+                      : null}
                     {phase === 'listing' && 'Generating listing…'}
                   </p>
                   {phase === 'analyzing' && (
-                    <p className="text-white/70 text-xs mt-1">Reading brand, colorway, condition…</p>
+                    <p className="text-white/70 text-xs mt-1">Reading item, brand, condition…</p>
                   )}
                   {phase === 'detecting' && detectedLabel && (
                     <p className="text-white/70 text-xs mt-1">Building your listing…</p>
@@ -205,10 +253,23 @@ export default function UploadPage() {
         disabled={!file || busy}
         className="btn-primary w-full flex items-center justify-center gap-2"
       >
-        {busy
-          ? <><Spinner />{phase === 'uploading' ? 'Uploading…' : phase === 'analyzing' ? 'Analyzing image…' : phase === 'detecting' ? 'Detecting item…' : 'Building listing…'}</>
-          : <><SparklesIcon />Generate Listing</>
-        }
+        {busy ? (
+          <>
+            <Spinner />
+            {phase === 'uploading'
+              ? 'Uploading…'
+              : phase === 'analyzing'
+              ? 'Analyzing image…'
+              : phase === 'detecting'
+              ? 'Detecting item…'
+              : 'Building listing…'}
+          </>
+        ) : (
+          <>
+            <SparklesIcon />
+            Generate Listing
+          </>
+        )}
       </button>
 
       {/* Animated step tracker */}
@@ -217,7 +278,6 @@ export default function UploadPage() {
           {PHASES.map((p, i) => {
             const isDone = i < currentPhaseIndex
             const isActive = p.id === phase
-            const isMuted = i > currentPhaseIndex
             return (
               <div
                 key={p.id}
@@ -225,21 +285,29 @@ export default function UploadPage() {
                   isActive ? 'bg-brand-50' : isDone ? 'bg-white' : 'bg-white'
                 } ${i < PHASES.length - 1 ? 'border-b border-orange-50' : ''}`}
               >
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all ${
-                  isDone ? 'bg-green-500 text-white' : isActive ? 'bg-brand-500 text-white' : 'bg-orange-100 text-gray-300'
-                }`}>
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-all ${
+                    isDone
+                      ? 'bg-green-500 text-white'
+                      : isActive
+                      ? 'bg-brand-500 text-white'
+                      : 'bg-orange-100 text-gray-300'
+                  }`}
+                >
                   {isDone ? '✓' : i + 1}
                 </div>
                 <div className="flex-1">
-                  <span className={`text-sm font-semibold transition-colors ${
-                    isActive ? 'text-brand-700' : isDone ? 'text-gray-500' : 'text-gray-300'
-                  }`}>
+                  <span
+                    className={`text-sm font-semibold transition-colors ${
+                      isActive ? 'text-brand-700' : isDone ? 'text-gray-500' : 'text-gray-300'
+                    }`}
+                  >
                     {p.id === 'detecting' && isActive && detectedLabel
                       ? `Detected: ${detectedLabel}`
                       : p.label}
                   </span>
                   {isActive && p.id === 'analyzing' && (
-                    <p className="text-[11px] text-brand-500 mt-0.5">Reading brand, colorway, condition…</p>
+                    <p className="text-[11px] text-brand-500 mt-0.5">Reading item, colorway, condition…</p>
                   )}
                   {isActive && p.id === 'detecting' && !detectedLabel && (
                     <p className="text-[11px] text-brand-500 mt-0.5">Identifying item category…</p>
@@ -252,7 +320,7 @@ export default function UploadPage() {
         </div>
       )}
 
-      {/* How it works — only when idle and no file chosen */}
+      {/* How it works */}
       {!file && !busy && (
         <div className="card animate-slide-up">
           <div className="flex items-center gap-2 mb-4">
@@ -263,7 +331,7 @@ export default function UploadPage() {
           </div>
           <div className="flex flex-col gap-3">
             <Step n={1} text="Upload a photo of your item" />
-            <Step n={2} text="AI reads the image: brand, colorway, condition" />
+            <Step n={2} text="AI reads the image: item type, brand, condition" />
             <Step n={3} text="Detected item type shown in real time" />
             <Step n={4} text="Edit and copy your listing to eBay, Depop, or Poshmark" />
           </div>
@@ -276,7 +344,9 @@ export default function UploadPage() {
 function Step({ n, text }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="w-8 h-8 bg-brand-100 text-brand-600 rounded-xl flex items-center justify-center font-bold text-sm shrink-0">{n}</div>
+      <div className="w-8 h-8 bg-brand-100 text-brand-600 rounded-xl flex items-center justify-center font-bold text-sm shrink-0">
+        {n}
+      </div>
       <span className="text-sm text-gray-700 font-medium">{text}</span>
     </div>
   )
@@ -285,16 +355,21 @@ function Step({ n, text }) {
 function CameraIcon() {
   return (
     <svg className="w-7 h-7 text-brand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.174C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.174 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.174C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175M12 12.75m0 0l-3-3m3 3l3-3m-6 6l-3-3m3 3l3-3" />
     </svg>
   )
 }
 
 function SparklesIcon({ small } = {}) {
   return (
-    <svg className={small ? 'w-3.5 h-3.5 text-brand-500' : 'w-5 h-5'} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+    <svg
+      className={small ? 'w-3.5 h-3.5 text-brand-500' : 'w-5 h-5'}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09l-.813 2.846z" />
     </svg>
   )
 }
