@@ -121,7 +121,7 @@ export function categorizeDetections(detections) {
     mouse: 'Electronics',
     keyboard: 'Electronics',
     monitor: 'Electronics',
-    cell phone: 'Electronics',
+    'cell phone': 'Electronics',
 
     // Accessories
     watch: 'Watches',
@@ -129,16 +129,16 @@ export function categorizeDetections(detections) {
     sunglasses: 'Accessories',
 
     // Sports
-    sports ball: 'Sports Equipment',
+    'sports ball': 'Sports Equipment',
     frisbee: 'Sports Equipment',
     skis: 'Sports Equipment',
     skateboard: 'Sports Equipment',
-    baseball bat: 'Sports Equipment',
-    baseball glove: 'Sports Equipment',
+    'baseball bat': 'Sports Equipment',
+    'baseball glove': 'Sports Equipment',
 
     // General items
     bottle: 'Drinkware',
-    wine glass: 'Drinkware',
+    'wine glass': 'Drinkware',
     cup: 'Drinkware',
     fork: 'Kitchenware',
     knife: 'Kitchenware',
@@ -155,7 +155,7 @@ export function categorizeDetections(detections) {
     book: 'Books',
 
     // Toys
-    teddy bear: 'Toys',
+    'teddy bear': 'Toys',
     kite: 'Toys',
   }
 

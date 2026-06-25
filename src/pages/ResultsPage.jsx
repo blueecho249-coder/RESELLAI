@@ -136,6 +136,11 @@ export default function ResultsPage() {
               Keyword analysis
             </span>
           )}
+          {pendingListing.source === 'local-vision' && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full bg-emerald-600/85 text-white backdrop-blur-sm">
+              <EyeIcon /> On-device Vision
+            </span>
+          )}
         </div>
       </div>
 

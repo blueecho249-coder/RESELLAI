@@ -16,14 +16,21 @@ async function callAnalyzeImage(imageUrl, file) {
       console.log('Using local vision analysis...')
       const visionResult = await analyzeImageForListing(file)
       if (visionResult.success) {
+        // Build a complete listing from the filename so price/priceRange/
+        // notes/conditionOptions are all populated, then overlay the real
+        // vision detections on top.
+        const base = generateListing(file.name)
         return {
-          title: `${visionResult.detectedItem || 'Item'}`,
-          category: visionResult.category,
-          brand: visionResult.brandHints?.[0] || null,
-          condition: visionResult.condition,
-          confidence: visionResult.confidence,
-          detectionScore: visionResult.detectionScore,
-          description: `Detected: ${visionResult.detectedItem}. ${visionResult.notes.join(' ')}`,
+          ...base,
+          title: visionResult.detectedItem
+            ? `${visionResult.detectedItem.charAt(0).toUpperCase()}${visionResult.detectedItem.slice(1)}`
+            : base.title,
+          category: visionResult.category || base.category,
+          brand: visionResult.brandHints?.[0] || base.brand,
+          condition: visionResult.condition || base.condition,
+          confidence: visionResult.confidence || base.confidence,
+          requiresReview: (visionResult.confidence || base.confidence) !== 'high',
+          detectedFeatures: visionResult.notes || [],
           source: 'local-vision',
         }
       }
